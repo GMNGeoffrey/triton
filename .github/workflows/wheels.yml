@@ -10,7 +10,7 @@ jobs:
   Build-Wheels:
     timeout-minutes: 60
 
-    runs-on: [self-hosted, CPU]
+    runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
