@@ -1,10 +1,9 @@
 name: Wheels
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 8 * * *"
 
-permissions: read-all
+permissions:
+  contents: write
 
 jobs:
 
@@ -47,56 +46,49 @@ jobs:
           echo "[build_ext]" >> python/setup.cfg
           echo "base-dir=/project" >> python/setup.cfg
 
-      - name: Build wheels
-        if: ${{ steps.check-version.outputs.new_commit == 'true' }}
+      - name: Create release files test
         run: |
-          export LATEST_DATE=$(TZ=UTC0 git show --quiet --date='format-local:%Y%m%d%H%M%S' --format="%cd")
-          # Pass MAX_JOBS=4 because, at time of writing, the VM "only" has 32GB
-          # of RAM and OOMs while building if we give it the default number of
-          # workers (2 * NUM_CPUs).
-          export CIBW_ENVIRONMENT="MAX_JOBS=4 \
-                  TRITON_WHEEL_NAME=triton-nightly \
-                  TRITON_WHEEL_VERSION_SUFFIX=-$LATEST_DATE \
-                  TRITON_BUILD_WITH_CLANG_LLD=1"
-          export CIBW_MANYLINUX_X86_64_IMAGE="quay.io/pypa/manylinux_2_28_x86_64:latest"
-          #export CIBW_MANYLINUX_PYPY_X86_64_IMAGE="quay.io/pypa/manylinux_2_28_x86_64:latest"
-          # many_linux_2_28 image comes with GCC 12.2.1, but not clang.
-          # With this install, it gets clang 16.0.6.
-          export CIBW_BEFORE_ALL="dnf install clang lld -y";
-          export CIBW_SKIP="cp{35,36,37}-*"
-          export CIBW_BUILD="cp3*-manylinux_x86_64"
-          python3 -m cibuildwheel python --output-dir wheelhouse
+          mkdir wheelhouse
+          echo "test" > wheelhouse/test_file.txt
+          
+      # - name: Build wheels
+      #   if: ${{ steps.check-version.outputs.new_commit == 'true' }}
+      #   run: |
+      #     export LATEST_DATE=$(TZ=UTC0 git show --quiet --date='format-local:%Y%m%d%H%M%S' --format="%cd")
+      #     # Pass MAX_JOBS=4 because, at time of writing, the VM "only" has 32GB
+      #     # of RAM and OOMs while building if we give it the default number of
+      #     # workers (2 * NUM_CPUs).
+      #     export CIBW_ENVIRONMENT="MAX_JOBS=4 \
+      #             TRITON_WHEEL_NAME=triton-nightly \
+      #             TRITON_WHEEL_VERSION_SUFFIX=-$LATEST_DATE \
+      #             TRITON_BUILD_WITH_CLANG_LLD=1"
+      #     export CIBW_MANYLINUX_X86_64_IMAGE="quay.io/pypa/manylinux_2_28_x86_64:latest"
+      #     #export CIBW_MANYLINUX_PYPY_X86_64_IMAGE="quay.io/pypa/manylinux_2_28_x86_64:latest"
+      #     # many_linux_2_28 image comes with GCC 12.2.1, but not clang.
+      #     # With this install, it gets clang 16.0.6.
+      #     export CIBW_BEFORE_ALL="dnf install clang lld -y";
+      #     export CIBW_SKIP="cp{35,36,37}-*"
+      #     export CIBW_BUILD="cp3*-manylinux_x86_64"
+      #     python3 -m cibuildwheel python --output-dir wheelhouse
 
-      - name: Install Azure CLI
-        if: ${{ steps.check-version.outputs.new_commit == 'true' }}
-        run: |
-          curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-
-      - name: Azure login
-        if: ${{ steps.check-version.outputs.new_commit == 'true' }}
-        uses: azure/login@v2
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@0cb9c9b65d5d1901c1f53e5e66eaf4afd303e70e # v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          tag_name: ${{ github.ref }}
+          release_name: Triton Build
+          body: |
+            The Triton nightly has been failing for months and I want something pip-installable.
+          draft: true
+          prerelease: true
 
-      - id: generate-token
-        name: Generate token
-        if: ${{ steps.check-version.outputs.new_commit == 'true' }}
-        run: |
-          AZ_TOKEN=$(az account get-access-token --query accessToken)
-          echo "::add-mask::$AZ_TOKEN"
-          echo "access_token=$AZ_TOKEN" >> "$GITHUB_OUTPUT"
-
-      - name: Publish wheels to Azure DevOps
-        if: ${{ steps.check-version.outputs.new_commit == 'true' }}
-        run: |
-          python3 -m pip install twine
-          python3 -m twine upload -r Triton-Nightly -u TritonArtifactsSP -p ${{ steps.generate-token.outputs.access_token }} --config-file utils/nightly.pypirc --non-interactive --verbose wheelhouse/*
-
-      - name: Azure Logout
-        if: ${{ steps.check-version.outputs.new_commit == 'true' && (success() || failure()) }}
-        run: |
-          az logout
-          az cache purge
-          az account clear
+      - name: Upload Release Assets
+        id: upload-release-assets
+        uses: dwenegar/upload-release-assets@5bc3024cf83521df8ebfadf00ad0c4614fd59148 # v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          release_id: ${{ steps.create_release.outputs.id }}
+          assets_path: ./wheelhouse
